@@ -197,6 +197,7 @@ class UIStreamHandler:
 st.sidebar.markdown("### ⚙️ Search Configuration")
 query = st.sidebar.text_input("Google Search Query", placeholder="e.g. tech startups blog list", help="Enter a search term to find relevant articles.")
 num_searches = st.sidebar.slider("Top Search Results Limit", min_value=5, max_value=50, value=20, step=5, help="Number of Google/DuckDuckGo links to extract.")
+serper_key = st.sidebar.text_input("Serper.dev API Key", type="password", value=os.environ.get("SERPER_API_KEY", ""), help="Paste your Serper.dev API key here (recommended for cloud hosting).")
 
 st.sidebar.markdown("### 🕷️ Crawler Settings")
 crawl_timeout = st.sidebar.slider("Crawl Timeout (seconds)", min_value=3, max_value=25, value=10, step=1, help="Max time to wait for a site response.")
@@ -233,7 +234,7 @@ def drain_logs():
         st.session_state.pipeline_state["terminal_logs"].append(decorated)
 
 # Hunting Pipeline Implementation
-def run_pipeline(state, query, num_searches, crawl_timeout, dns_workers, whois_workers, pacing_delay):
+def run_pipeline(state, query, num_searches, crawl_timeout, dns_workers, whois_workers, pacing_delay, serper_key=None):
     try:
         t0 = time.time()
         # Configure local logger capture
@@ -245,7 +246,7 @@ def run_pipeline(state, query, num_searches, crawl_timeout, dns_workers, whois_w
         state["log_queue"].put("[INFO] Pipeline started. Initiating search...")
         urls = []
         try:
-            urls = searcher.search_google(query, num_searches)
+            urls = searcher.search_google(query, num_searches, serper_key)
         except Exception as e:
             state["log_queue"].put(f"[WARNING] Google search failed: {e}")
             
@@ -389,7 +390,7 @@ if start_hunt:
         # Run pipeline in a separate thread so UI stays highly responsive
         pipeline_thread = threading.Thread(
             target=run_pipeline,
-            args=(st.session_state.pipeline_state, query, num_searches, crawl_timeout, dns_workers, whois_workers, pacing_delay)
+            args=(st.session_state.pipeline_state, query, num_searches, crawl_timeout, dns_workers, whois_workers, pacing_delay, serper_key)
         )
         pipeline_thread.start()
         st.rerun()
