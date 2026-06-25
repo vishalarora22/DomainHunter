@@ -197,7 +197,7 @@ class UIStreamHandler:
 st.sidebar.markdown("### ⚙️ Search Configuration")
 query = st.sidebar.text_input("Google Search Query", placeholder="e.g. tech startups blog list", help="Enter a search term to find relevant articles.")
 num_searches = st.sidebar.slider("Top Search Results Limit", min_value=5, max_value=50, value=20, step=5, help="Number of Google/DuckDuckGo links to extract.")
-serper_key = st.sidebar.text_input("Serper.dev API Key", type="password", value=os.environ.get("SERPER_API_KEY", ""), help="Paste your Serper.dev API key here (recommended for cloud hosting).")
+serper_key = st.sidebar.text_input("Serper.dev API Key", value=os.environ.get("SERPER_API_KEY", ""), help="Paste your Serper.dev API key here (recommended for cloud hosting).")
 
 st.sidebar.markdown("### 🕷️ Crawler Settings")
 crawl_timeout = st.sidebar.slider("Crawl Timeout (seconds)", min_value=3, max_value=25, value=10, step=1, help="Max time to wait for a site response.")
