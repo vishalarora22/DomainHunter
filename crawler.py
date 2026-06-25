@@ -117,6 +117,19 @@ def is_excluded(domain):
             return True
     return False
 
+def is_excluded_extra(domain, extra_excluded):
+    """
+    Checks if a domain (or any parent domain) is in the caller-supplied extra exclusion set.
+    Mirrors is_excluded() but against a dynamic set rather than the static EXCLUDED_DOMAINS.
+    """
+    parts = domain.split(".")
+    for i in range(len(parts) - 1):
+        parent = ".".join(parts[i:])
+        if parent in extra_excluded:
+            return True
+    return False
+
+
 def is_internal(source_domain, link_domain):
     """
     Checks if the link domain is internal relative to the source domain.
@@ -128,10 +141,11 @@ def is_internal(source_domain, link_domain):
         return True
     return False
 
-def crawl_url(url, found_domains):
+def crawl_url(url, found_domains, extra_excluded=None):
     """
     Fetches the URL, parses HTML using BeautifulSoup, filters links,
     and updates found_domains set with valid external domains.
+    extra_excluded: optional set of additional domains to block (from UI checkboxes).
     """
     source_domain = clean_domain(url)
     if not source_domain:
@@ -200,6 +214,10 @@ def crawl_url(url, found_domains):
             
         # Filter out excluded social and system domains
         if is_excluded(link_domain):
+            continue
+
+        # Filter out any extra domains excluded via UI checkboxes
+        if extra_excluded and is_excluded_extra(link_domain, extra_excluded):
             continue
             
         # If we got here, it's a valid external domain

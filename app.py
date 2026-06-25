@@ -1,5 +1,6 @@
 import streamlit as st
 import sys
+import html as html_lib
 # Self-healing: if time module was globally corrupted, reload it from scratch
 if 'time' in sys.modules:
     try:
@@ -22,15 +23,6 @@ from urllib.parse import urlparse
 import searcher
 import crawler
 import checker
-
-# Force reload project modules to ensure latest changes on disk are used
-try:
-    import importlib
-    importlib.reload(searcher)
-    importlib.reload(crawler)
-    importlib.reload(checker)
-except Exception:
-    pass
 
 # Page Configuration
 st.set_page_config(
@@ -195,19 +187,32 @@ class UIStreamHandler:
 
 # Sidebar Configurations
 st.sidebar.markdown("### ⚙️ Search Configuration")
-query = st.sidebar.text_input("Search Query", placeholder="e.g. tech startups blog list", help="Enter a search term to find relevant articles.")
-search_engines = st.sidebar.multiselect(
-    "Search Engines",
-    options=["Google", "DuckDuckGo"],
-    default=["Google", "DuckDuckGo"],
-    help="Select which search engines to query."
-)
-num_searches = st.sidebar.slider("Top Search Results Limit", min_value=5, max_value=50, value=20, step=5, help="Number of search results to extract per engine.")
-serper_key_input = st.sidebar.text_input("Serper.dev API Key Override", type="password", value="", help="Leave blank if you configured it in Streamlit Secrets.")
+query = st.sidebar.text_input("Google Search Query", placeholder="e.g. tech startups blog list", help="Enter a search term to find relevant articles.")
+# Validate and cap query length
+MAX_QUERY_LEN = 300
+if query and len(query) > MAX_QUERY_LEN:
+    st.sidebar.warning(f"Query truncated to {MAX_QUERY_LEN} characters.")
+    query = query[:MAX_QUERY_LEN]
+num_searches = st.sidebar.slider("Top Search Results Limit", min_value=5, max_value=50, value=20, step=5, help="Number of Google/DuckDuckGo links to extract.")
+
+st.sidebar.markdown("**Search Engine**")
+use_google = st.sidebar.checkbox("Google (via Serper.dev)", value=True, help="Use Google Search via Serper.dev API.")
+use_ddg = st.sidebar.checkbox("DuckDuckGo", value=True, help="Use DuckDuckGo as a search source.")
+if not use_google and not use_ddg:
+    st.sidebar.warning("Select at least one search engine.")
+
+st.sidebar.markdown("**🚫 Exclude Social Platforms from Crawl**")
+exclude_youtube   = st.sidebar.checkbox("YouTube",    value=True)
+exclude_instagram = st.sidebar.checkbox("Instagram",  value=True)
+exclude_facebook  = st.sidebar.checkbox("Facebook",   value=True)
+exclude_tiktok    = st.sidebar.checkbox("TikTok",     value=True)
+exclude_twitter   = st.sidebar.checkbox("X / Twitter",value=True)
+exclude_linkedin  = st.sidebar.checkbox("LinkedIn",   value=True)
+exclude_reddit    = st.sidebar.checkbox("Reddit",     value=False)
+exclude_pinterest = st.sidebar.checkbox("Pinterest",  value=False)
 
 st.sidebar.markdown("### 🕷️ Crawler Settings")
 crawl_timeout = st.sidebar.slider("Crawl Timeout (seconds)", min_value=3, max_value=25, value=10, step=1, help="Max time to wait for a site response.")
-exclude_social = st.sidebar.checkbox("Exclude Social Media", value=True, help="Skip YouTube, Instagram, Facebook, TikTok, and other networks.")
 
 st.sidebar.markdown("### 🔍 Verification Settings")
 dns_workers = st.sidebar.slider("DNS Threads", min_value=5, max_value=50, value=20, step=5, help="Parallel threads for checking active domains.")
@@ -215,7 +220,8 @@ whois_workers = st.sidebar.slider("WHOIS Threads", min_value=1, max_value=5, val
 pacing_delay = st.sidebar.slider("WHOIS Pacing Delay (s)", min_value=0.5, max_value=3.0, value=1.2, step=0.1, help="Delay between consecutive WHOIS queries per thread to prevent blocking.")
 
 st.sidebar.markdown("---")
-start_hunt = st.sidebar.button("🚀 Start Hunting", type="primary", use_container_width=True, disabled=st.session_state.pipeline_state["active"])
+no_engine = not use_google and not use_ddg
+start_hunt = st.sidebar.button("🚀 Start Hunting", type="primary", use_container_width=True, disabled=st.session_state.pipeline_state["active"] or no_engine)
 if st.session_state.pipeline_state["active"]:
     st.sidebar.info("Hunting process is currently active...")
 
@@ -227,21 +233,28 @@ def drain_logs():
     q = st.session_state.pipeline_state["log_queue"]
     while not q.empty():
         line = q.get()
-        # Decorate based on contents
+        # HTML-escape the raw log content before injecting into HTML (XSS fix)
+        safe_line = html_lib.escape(line)
+        # Decorate based on contents (operate on original line for keyword checks,
+        # but render only the escaped version)
         if "[INFO]" in line or "Fetching:" in line or "Querying" in line:
-            decorated = f"<span class='terminal-info'>[INFO]</span> {line.split(']', 1)[-1] if ']' in line else line}"
+            suffix = html_lib.escape(line.split(']', 1)[-1] if ']' in line else line)
+            decorated = f"<span class='terminal-info'>[INFO]</span> {suffix}"
         elif "[WARNING]" in line:
-            decorated = f"<span class='terminal-warning'>[WARN]</span> {line.split(']', 1)[-1] if ']' in line else line}"
+            suffix = html_lib.escape(line.split(']', 1)[-1] if ']' in line else line)
+            decorated = f"<span class='terminal-warning'>[WARN]</span> {suffix}"
         elif "[ERROR]" in line or "failed" in line.lower():
-            decorated = f"<span class='terminal-error'>[ERR]</span> {line.split(']', 1)[-1] if ']' in line else line}"
+            suffix = html_lib.escape(line.split(']', 1)[-1] if ']' in line else line)
+            decorated = f"<span class='terminal-error'>[ERR]</span> {suffix}"
         elif "Successfully" in line or "Finished" in line:
-            decorated = f"<span class='terminal-success'>[SUCCESS]</span> {line.split(']', 1)[-1] if ']' in line else line}"
+            suffix = html_lib.escape(line.split(']', 1)[-1] if ']' in line else line)
+            decorated = f"<span class='terminal-success'>[SUCCESS]</span> {suffix}"
         else:
-            decorated = line
+            decorated = safe_line
         st.session_state.pipeline_state["terminal_logs"].append(decorated)
 
 # Hunting Pipeline Implementation
-def run_pipeline(state, query, num_searches, crawl_timeout, dns_workers, whois_workers, pacing_delay, serper_key=None, exclude_social=True, search_engines=["Google", "DuckDuckGo"]):
+def run_pipeline(state, query, num_searches, crawl_timeout, dns_workers, whois_workers, pacing_delay, serper_key=None, use_google=True, use_ddg=True, extra_excluded=None):
     try:
         t0 = time.time()
         # Configure local logger capture
@@ -252,27 +265,23 @@ def run_pipeline(state, query, num_searches, crawl_timeout, dns_workers, whois_w
         # Step 1: Search the Web
         state["log_queue"].put("[INFO] Pipeline started. Initiating search...")
         urls = []
-        unique_urls = set()
-        
-        if "Google" in search_engines:
-            state["log_queue"].put("[INFO] Querying Google...")
+
+        if use_google:
             try:
                 google_urls = searcher.search_google(query, num_searches, serper_key)
-                for u in google_urls:
-                    if u not in unique_urls:
-                        unique_urls.add(u)
-                        urls.append(u)
+                urls.extend(google_urls)
+                state["log_queue"].put(f"[INFO] Google returned {len(google_urls)} results.")
             except Exception as e:
                 state["log_queue"].put(f"[WARNING] Google search failed: {e}")
-                
-        if "DuckDuckGo" in search_engines:
-            state["log_queue"].put("[INFO] Querying DuckDuckGo...")
+
+        if use_ddg:
             try:
                 ddg_urls = searcher.search_duckduckgo(query, num_searches)
-                for u in ddg_urls:
-                    if u not in unique_urls:
-                        unique_urls.add(u)
-                        urls.append(u)
+                # Deduplicate against already-found Google URLs
+                existing = set(urls)
+                new_ddg = [u for u in ddg_urls if u not in existing]
+                urls.extend(new_ddg)
+                state["log_queue"].put(f"[INFO] DuckDuckGo returned {len(ddg_urls)} results ({len(new_ddg)} unique new).")
             except Exception as e:
                 state["log_queue"].put(f"[ERROR] DuckDuckGo search failed: {e}")
                 
@@ -293,7 +302,7 @@ def run_pipeline(state, query, num_searches, crawl_timeout, dns_workers, whois_w
         for idx, url in enumerate(urls):
             state["log_queue"].put(f"[INFO] Crawling page {idx+1}/{len(urls)}: {url}")
             try:
-                crawler.crawl_url(url, found_domains, exclude_social)
+                crawler.crawl_url(url, found_domains, extra_excluded=extra_excluded)
             except Exception as e:
                 state["log_queue"].put(f"[WARNING] Failed crawling {url}: {e}")
                 
@@ -392,8 +401,6 @@ def run_pipeline(state, query, num_searches, crawl_timeout, dns_workers, whois_w
 if start_hunt:
     if not query.strip():
         st.warning("Please specify a valid search query first.")
-    elif not search_engines:
-        st.warning("Please select at least one search engine.")
     else:
         st.session_state.pipeline_state["active"] = True
         st.session_state.pipeline_state["terminal_logs"] = []
@@ -408,13 +415,38 @@ if start_hunt:
             "execution_time": 0.0
         }
         
-        # Determine key to use (UI input takes precedence over Secrets)
-        resolved_key = serper_key_input if serper_key_input else os.environ.get("SERPER_API_KEY", "")
+        # Resolve Serper API key from environment or Streamlit secrets only (never from UI input)
+        resolved_key = ""
+        try:
+            resolved_key = st.secrets.get("SERPER_API_KEY", "")
+        except Exception:
+            pass
+        if not resolved_key:
+            resolved_key = os.environ.get("SERPER_API_KEY", "")
+
+        # Build extra domains to exclude based on sidebar checkboxes
+        extra_excluded = set()
+        if exclude_youtube:
+            extra_excluded.update({"youtube.com", "youtu.be"})
+        if exclude_instagram:
+            extra_excluded.add("instagram.com")
+        if exclude_facebook:
+            extra_excluded.update({"facebook.com", "fb.me"})
+        if exclude_tiktok:
+            extra_excluded.add("tiktok.com")
+        if exclude_twitter:
+            extra_excluded.update({"twitter.com", "x.com", "t.co"})
+        if exclude_linkedin:
+            extra_excluded.add("linkedin.com")
+        if exclude_reddit:
+            extra_excluded.add("reddit.com")
+        if exclude_pinterest:
+            extra_excluded.add("pinterest.com")
         
         # Run pipeline in a separate thread so UI stays highly responsive
         pipeline_thread = threading.Thread(
             target=run_pipeline,
-            args=(st.session_state.pipeline_state, query, num_searches, crawl_timeout, dns_workers, whois_workers, pacing_delay, resolved_key, exclude_social, search_engines)
+            args=(st.session_state.pipeline_state, query, num_searches, crawl_timeout, dns_workers, whois_workers, pacing_delay, resolved_key, use_google, use_ddg, extra_excluded)
         )
         pipeline_thread.start()
         st.rerun()
