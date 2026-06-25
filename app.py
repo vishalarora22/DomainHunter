@@ -174,7 +174,7 @@ if "pipeline_state" not in st.session_state:
         "found_domains": [],
         "expired_domains": [],
         "metrics": {
-            "search_urls": 0,
+            "searched_urls": 0,
             "domains_found": 0,
             "available_domains": 0,
             "expired_domains": 0,
