@@ -1,5 +1,6 @@
 import streamlit as st
 import sys
+import html as html_lib
 # Self-healing: if time module was globally corrupted, reload it from scratch
 if 'time' in sys.modules:
     try:
@@ -22,15 +23,6 @@ from urllib.parse import urlparse
 import searcher
 import crawler
 import checker
-
-# Force reload project modules to ensure latest changes on disk are used
-try:
-    import importlib
-    importlib.reload(searcher)
-    importlib.reload(crawler)
-    importlib.reload(checker)
-except Exception:
-    pass
 
 # Page Configuration
 st.set_page_config(
@@ -196,8 +188,12 @@ class UIStreamHandler:
 # Sidebar Configurations
 st.sidebar.markdown("### ⚙️ Search Configuration")
 query = st.sidebar.text_input("Google Search Query", placeholder="e.g. tech startups blog list", help="Enter a search term to find relevant articles.")
+# Validate and cap query length
+MAX_QUERY_LEN = 300
+if query and len(query) > MAX_QUERY_LEN:
+    st.sidebar.warning(f"Query truncated to {MAX_QUERY_LEN} characters.")
+    query = query[:MAX_QUERY_LEN]
 num_searches = st.sidebar.slider("Top Search Results Limit", min_value=5, max_value=50, value=20, step=5, help="Number of Google/DuckDuckGo links to extract.")
-serper_key_input = st.sidebar.text_input("Serper.dev API Key Override", type="password", value="", help="Leave blank if you configured it in Streamlit Secrets.")
 
 st.sidebar.markdown("### 🕷️ Crawler Settings")
 crawl_timeout = st.sidebar.slider("Crawl Timeout (seconds)", min_value=3, max_value=25, value=10, step=1, help="Max time to wait for a site response.")
@@ -220,17 +216,24 @@ def drain_logs():
     q = st.session_state.pipeline_state["log_queue"]
     while not q.empty():
         line = q.get()
-        # Decorate based on contents
+        # HTML-escape the raw log content before injecting into HTML (XSS fix)
+        safe_line = html_lib.escape(line)
+        # Decorate based on contents (operate on original line for keyword checks,
+        # but render only the escaped version)
         if "[INFO]" in line or "Fetching:" in line or "Querying" in line:
-            decorated = f"<span class='terminal-info'>[INFO]</span> {line.split(']', 1)[-1] if ']' in line else line}"
+            suffix = html_lib.escape(line.split(']', 1)[-1] if ']' in line else line)
+            decorated = f"<span class='terminal-info'>[INFO]</span> {suffix}"
         elif "[WARNING]" in line:
-            decorated = f"<span class='terminal-warning'>[WARN]</span> {line.split(']', 1)[-1] if ']' in line else line}"
+            suffix = html_lib.escape(line.split(']', 1)[-1] if ']' in line else line)
+            decorated = f"<span class='terminal-warning'>[WARN]</span> {suffix}"
         elif "[ERROR]" in line or "failed" in line.lower():
-            decorated = f"<span class='terminal-error'>[ERR]</span> {line.split(']', 1)[-1] if ']' in line else line}"
+            suffix = html_lib.escape(line.split(']', 1)[-1] if ']' in line else line)
+            decorated = f"<span class='terminal-error'>[ERR]</span> {suffix}"
         elif "Successfully" in line or "Finished" in line:
-            decorated = f"<span class='terminal-success'>[SUCCESS]</span> {line.split(']', 1)[-1] if ']' in line else line}"
+            suffix = html_lib.escape(line.split(']', 1)[-1] if ']' in line else line)
+            decorated = f"<span class='terminal-success'>[SUCCESS]</span> {suffix}"
         else:
-            decorated = line
+            decorated = safe_line
         st.session_state.pipeline_state["terminal_logs"].append(decorated)
 
 # Hunting Pipeline Implementation
@@ -387,8 +390,14 @@ if start_hunt:
             "execution_time": 0.0
         }
         
-        # Determine key to use (UI input takes precedence over Secrets)
-        resolved_key = serper_key_input if serper_key_input else os.environ.get("SERPER_API_KEY", "")
+        # Resolve Serper API key from environment or Streamlit secrets only (never from UI input)
+        resolved_key = ""
+        try:
+            resolved_key = st.secrets.get("SERPER_API_KEY", "")
+        except Exception:
+            pass
+        if not resolved_key:
+            resolved_key = os.environ.get("SERPER_API_KEY", "")
         
         # Run pipeline in a separate thread so UI stays highly responsive
         pipeline_thread = threading.Thread(

@@ -3,6 +3,7 @@ import sys
 import json
 import time
 import datetime
+import re
 from urllib.parse import urlparse
 import concurrent.futures
 import socket
@@ -22,6 +23,32 @@ except ImportError:
 
 
 WHOIS_DELAY = 1.2
+
+# Characters that can break out of Markdown table cells or inject content
+_MD_UNSAFE = re.compile(r'[|`\[\]<>\r\n\\]')
+
+def sanitize_md(value, max_len=200):
+    """
+    Strips characters that could break Markdown table formatting or inject HTML/links.
+    Truncates to max_len as a safeguard against excessively long external strings.
+    """
+    if not isinstance(value, str):
+        value = str(value)
+    value = _MD_UNSAFE.sub('', value)
+    return value[:max_len]
+
+
+def safe_load_path(filepath, base_dir=None):
+    """
+    Resolves the filepath and ensures it stays within base_dir (defaults to CWD).
+    Raises ValueError on path traversal attempts.
+    """
+    if base_dir is None:
+        base_dir = os.path.abspath(os.getcwd())
+    abs_path = os.path.abspath(filepath)
+    if not abs_path.startswith(base_dir + os.sep) and abs_path != base_dir:
+        raise ValueError(f"Path traversal detected: '{filepath}' is outside base directory '{base_dir}'")
+    return abs_path
 
 
 def clean_domain(domain_str):
@@ -48,6 +75,12 @@ def load_domains(filepath):
     - list of strings/dicts (old format)
     Returns a dictionary mapping clean domain name to a list of source/referrer URLs.
     """
+    # Validate path is within CWD (path traversal protection)
+    try:
+        filepath = safe_load_path(filepath)
+    except ValueError as e:
+        print(f"[-] Security error: {e}")
+        return {}
     if not os.path.exists(filepath):
         # Create a mock found_domains.json if it doesn't exist
         mock_data = [
@@ -503,14 +536,18 @@ def format_sources_md(sources):
     for s in sources:
         try:
             parsed = urlparse(s)
+            # Only allow http/https source URLs
+            if parsed.scheme not in ("http", "https"):
+                continue
             domain = parsed.netloc.lower().replace("www.", "")
             path = parsed.path
             if len(path) > 15:
                 path = path[:12] + "..."
-            label = f"{domain}{path}"
-            links.append(f"[{label}]({s})")
+            label = sanitize_md(f"{domain}{path}", max_len=60)
+            safe_url = sanitize_md(s, max_len=300)
+            links.append(f"[{label}]({safe_url})")
         except Exception:
-            links.append(f"[Link]({s})")
+            links.append("[Link]")
     return ", ".join(links[:4]) + ("..." if len(links) > 4 else "")
 
 
@@ -545,7 +582,7 @@ def generate_md_report(filepath, total_checked, resolving_count, non_resolving_r
             f.write("| Domain | Found On | Registration Search Link |\n")
             f.write("| --- | --- | --- |\n")
             for item in available_list:
-                dom = item["domain"]
+                dom = sanitize_md(item["domain"])
                 sources = format_sources_md(item.get("sources", []))
                 search_url = f"https://www.namecheap.com/domains/registration/results/?domain={dom}"
                 f.write(f"| `{dom}` | {sources} | [Search on Namecheap]({search_url}) |\n")
@@ -559,8 +596,8 @@ def generate_md_report(filepath, total_checked, resolving_count, non_resolving_r
             f.write("| Domain | Expiration Date | Found On | Register Search |\n")
             f.write("| --- | --- | --- | --- |\n")
             for item in expired_list:
-                dom = item["domain"]
-                exp = item["expiration_date"] or "N/A"
+                dom = sanitize_md(item["domain"])
+                exp = sanitize_md(item["expiration_date"] or "N/A")
                 sources = format_sources_md(item.get("sources", []))
                 search_url = f"https://www.namecheap.com/domains/registration/results/?domain={dom}"
                 f.write(f"| `{dom}` | `{exp}` | {sources} | [Search]({search_url}) |\n")
@@ -574,13 +611,12 @@ def generate_md_report(filepath, total_checked, resolving_count, non_resolving_r
             f.write("| Domain | Expiration Date | Status / Details | Found On |\n")
             f.write("| --- | --- | --- | --- |\n")
             for item in redemption_list:
-                dom = item["domain"]
-                exp = item["expiration_date"] or "N/A"
+                dom = sanitize_md(item["domain"])
+                exp = sanitize_md(item["expiration_date"] or "N/A")
                 status = item["whois_status"]
                 sources = format_sources_md(item.get("sources", []))
                 status_str = status if isinstance(status, str) else ", ".join(status) if isinstance(status, list) else "N/A"
-                if len(status_str) > 50:
-                    status_str = status_str[:47] + "..."
+                status_str = sanitize_md(status_str, max_len=50)
                 f.write(f"| `{dom}` | `{exp}` | `{status_str}` | {sources} |\n")
         else:
             f.write("*No domains in redemption/pending delete found.*\n")
@@ -592,8 +628,8 @@ def generate_md_report(filepath, total_checked, resolving_count, non_resolving_r
             f.write("| Domain | Expiration Date | Found On |\n")
             f.write("| --- | --- | --- |\n")
             for item in inactive_list:
-                dom = item["domain"]
-                exp = item["expiration_date"] or "N/A"
+                dom = sanitize_md(item["domain"])
+                exp = sanitize_md(item["expiration_date"] or "N/A")
                 sources = format_sources_md(item.get("sources", []))
                 f.write(f"| `{dom}` | `{exp}` | {sources} |\n")
         else:
@@ -607,7 +643,9 @@ def generate_md_report(filepath, total_checked, resolving_count, non_resolving_r
             f.write("| --- | --- | --- |\n")
             for item in error_list:
                 sources = format_sources_md(item.get("sources", []))
-                f.write(f"| `{item['domain']}` | `{item.get('error', 'Unknown Error')}` | {sources} |\n")
+                dom = sanitize_md(item['domain'])
+                err = sanitize_md(item.get('error', 'Unknown Error'))
+                f.write(f"| `{dom}` | `{err}` | {sources} |\n")
             f.write("\n")
 
 

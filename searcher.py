@@ -15,10 +15,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Searcher")
 
-def search_google(query: str, num_results: int) -> list[str]:
+def search_google(query: str, num_results: int, api_key: str = None) -> list[str]:
     """
-    Attempt to search Google using the googlesearch-python library.
+    Attempt to search Google using Serper.dev API (if API key is provided) 
+    or fall back to the googlesearch-python library.
     """
+    if api_key:
+        logger.info(f"Querying Serper.dev Google API for: '{query}' (limit: {num_results})")
+        try:
+            import requests
+            url = "https://google.serper.dev/search"
+            payload = json.dumps({
+                "q": query,
+                "num": num_results
+            })
+            headers = {
+                'X-API-KEY': api_key,
+                'Content-Type': 'application/json'
+            }
+            response = requests.post(url, headers=headers, data=payload, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            results = [item["link"] for item in data.get("organic", []) if "link" in item]
+            logger.info(f"Serper.dev returned {len(results)} results.")
+            return results
+        except Exception as e:
+            logger.error(f"Serper.dev API query failed: {e}")
+            logger.info("Falling back to local googlesearch library...")
+
     logger.info(f"Querying Google for: '{query}' (limit: {num_results})")
     try:
         import googlesearch
@@ -63,12 +87,23 @@ def main():
     parser = argparse.ArgumentParser(description="Search the web and write results to JSON.")
     parser.add_argument("query", type=str, help="Search query")
     parser.add_argument("-n", "--num", type=int, default=20, help="Number of results to return (default: 20)")
+    parser.add_argument("--serper-key", type=str, default=os.environ.get("SERPER_API_KEY"), help="Serper.dev API Key")
     args = parser.parse_args()
     
+    # Validate and sanitize query input
+    MAX_QUERY_LEN = 300
+    args.query = args.query.strip()
+    if not args.query:
+        logger.critical("Empty search query provided.")
+        sys.exit(1)
+    if len(args.query) > MAX_QUERY_LEN:
+        logger.warning(f"Query truncated from {len(args.query)} to {MAX_QUERY_LEN} characters.")
+        args.query = args.query[:MAX_QUERY_LEN]
+
     # 1. Try Google Search
     urls = []
     try:
-        urls = search_google(args.query, args.num)
+        urls = search_google(args.query, args.num, args.serper_key)
     except Exception as e:
         logger.warning(f"Unexpected error during Google search: {e}")
         

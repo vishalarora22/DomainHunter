@@ -1,5 +1,7 @@
+import ipaddress
 import json
 import logging
+import socket
 import sys
 from urllib.parse import urljoin, urlparse
 import requests
@@ -33,6 +35,51 @@ EXCLUDED_DOMAINS = {
     "hotjar.com", "sentry.io", "segment.io", "mixpanel.com", "disqus.com",
     "cloudfront.net", "fastly.net", "akamaihd.net", "gravatar.com", "wp.com",
 }
+
+MAX_QUERY_LENGTH = 500  # Cap on URL/query length to prevent abuse
+
+# Private and reserved IP ranges that must never be fetched (SSRF protection)
+_PRIVATE_NETWORKS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),   # Link-local / AWS metadata
+    ipaddress.ip_network("100.64.0.0/10"),    # Shared address space
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
+
+def is_safe_url(url_str):
+    """
+    Returns True only if the URL resolves to a public, routable IP address.
+    Rejects private, loopback, link-local, and reserved ranges (SSRF protection).
+    """
+    try:
+        parsed = urlparse(url_str)
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        # Resolve the hostname to its IP address(es)
+        infos = socket.getaddrinfo(hostname, None)
+        for info in infos:
+            ip_str = info[4][0]
+            try:
+                addr = ipaddress.ip_address(ip_str)
+            except ValueError:
+                return False
+            if addr.is_loopback or addr.is_link_local or addr.is_multicast or addr.is_reserved:
+                return False
+            for network in _PRIVATE_NETWORKS:
+                if addr in network:
+                    logger.warning(f"SSRF block: {url_str} resolves to private IP {ip_str}")
+                    return False
+        return True
+    except Exception as e:
+        logger.warning(f"SSRF check failed for {url_str}: {e}")
+        return False
+
 
 def clean_domain(url_str):
     """
@@ -89,6 +136,16 @@ def crawl_url(url, found_domains):
     source_domain = clean_domain(url)
     if not source_domain:
         logger.warning(f"Skipping invalid source URL: {url}")
+        return
+
+    # Enforce URL length cap
+    if len(url) > MAX_QUERY_LENGTH:
+        logger.warning(f"Skipping oversized URL (len={len(url)}): {url[:80]}...")
+        return
+
+    # SSRF protection: reject URLs that resolve to internal/private addresses
+    if not is_safe_url(url):
+        logger.warning(f"Skipping potentially internal/private URL (SSRF guard): {url}")
         return
 
     headers = {
