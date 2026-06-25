@@ -197,7 +197,7 @@ class UIStreamHandler:
 st.sidebar.markdown("### ⚙️ Search Configuration")
 query = st.sidebar.text_input("Google Search Query", placeholder="e.g. tech startups blog list", help="Enter a search term to find relevant articles.")
 num_searches = st.sidebar.slider("Top Search Results Limit", min_value=5, max_value=50, value=20, step=5, help="Number of Google/DuckDuckGo links to extract.")
-serper_key = st.sidebar.text_input("Serper.dev API Key", value=os.environ.get("SERPER_API_KEY", ""), help="Paste your Serper.dev API key here (recommended for cloud hosting).")
+serper_key_input = st.sidebar.text_input("Serper.dev API Key Override", type="password", value="", help="Leave blank if you configured it in Streamlit Secrets.")
 
 st.sidebar.markdown("### 🕷️ Crawler Settings")
 crawl_timeout = st.sidebar.slider("Crawl Timeout (seconds)", min_value=3, max_value=25, value=10, step=1, help="Max time to wait for a site response.")
@@ -387,10 +387,13 @@ if start_hunt:
             "execution_time": 0.0
         }
         
+        # Determine key to use (UI input takes precedence over Secrets)
+        resolved_key = serper_key_input if serper_key_input else os.environ.get("SERPER_API_KEY", "")
+        
         # Run pipeline in a separate thread so UI stays highly responsive
         pipeline_thread = threading.Thread(
             target=run_pipeline,
-            args=(st.session_state.pipeline_state, query, num_searches, crawl_timeout, dns_workers, whois_workers, pacing_delay, serper_key)
+            args=(st.session_state.pipeline_state, query, num_searches, crawl_timeout, dns_workers, whois_workers, pacing_delay, resolved_key)
         )
         pipeline_thread.start()
         st.rerun()
