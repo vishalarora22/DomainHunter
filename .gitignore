@@ -1,0 +1,10 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.log
+expired_domains.json
+found_domains.json
+search_results.json
+expired_domains.md
+searcher.log
