@@ -447,66 +447,63 @@ with tab_results:
     st.markdown("### 🎯 Hunt Results")
     
     raw_results = st.session_state.pipeline_state.get("expired_domains", [])
+    if raw_results:
+        # Parse into a clean DataFrame
+        df_rows = []
+        for r in raw_results:
+            dom = r["domain"]
+            status = r["status"]
+            exp = r.get("expiration_date") or "N/A"
+            if exp != "N/A":
+                try:
+                    exp = exp.split("T")[0]
+                except Exception:
+                    pass
             
-        if raw_results:
-            # Parse into a clean DataFrame
-            df_rows = []
-            for r in raw_results:
-                dom = r["domain"]
-                status = r["status"]
-                exp = r.get("expiration_date") or "N/A"
-                if exp != "N/A":
-                    try:
-                        exp = exp.split("T")[0]
-                    except Exception:
-                        pass
-                
-                sources = r.get("sources", [])
-                sources_str = ", ".join(sources)
-                
-                df_rows.append({
-                    "Domain": dom,
-                    "Status": status.upper(),
-                    "Expiration Date": exp,
-                    "Found On": sources_str,
-                    "Register Search Link": f"https://www.namecheap.com/domains/registration/results/?domain={dom}"
-                })
-                
-            df = pd.DataFrame(df_rows)
+            sources = r.get("sources", [])
+            sources_str = ", ".join(sources)
             
-            # Search / Filter utilities
-            search_filter = st.text_input("🔍 Filter results by domain extension or keyword", placeholder="e.g. .com or .net")
-            status_filter = st.multiselect("Filter Statuses", options=["AVAILABLE", "EXPIRED", "REDEMPTION"], default=["AVAILABLE", "EXPIRED", "REDEMPTION"])
+            df_rows.append({
+                "Domain": dom,
+                "Status": status.upper(),
+                "Expiration Date": exp,
+                "Found On": sources_str,
+                "Register Search Link": f"https://www.namecheap.com/domains/registration/results/?domain={dom}"
+            })
             
-            if search_filter:
-                df = df[df["Domain"].str.contains(search_filter.lower())]
-            df = df[df["Status"].isin(status_filter)]
-            
-            st.dataframe(
-                df,
-                column_config={
-                    "Domain": st.column_config.TextColumn("Domain Name", width="medium"),
-                    "Status": st.column_config.TextColumn("Analysis Result"),
-                    "Expiration Date": st.column_config.TextColumn("Expiration"),
-                    "Found On": st.column_config.TextColumn("Found On Source Pages"),
-                    "Register Search Link": st.column_config.LinkColumn("Register Link", display_text="Check Namecheap")
-                },
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            # Expose Download Option
-            col_csv, col_json = st.columns(2)
-            with col_csv:
-                csv_data = df.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Download Results as CSV", data=csv_data, file_name="domain_hunter_results.csv", mime="text/csv", use_container_width=True)
-            with col_json:
-                json_data = json.dumps(raw_results, indent=4)
-                st.download_button("📥 Download Raw JSON", data=json_data, file_name="domain_hunter_results.json", mime="application/json", use_container_width=True)
-        else:
-            st.info("No available or expired domains identified yet. Adjust settings or run a new search.")
+        df = pd.DataFrame(df_rows)
+        
+        # Search / Filter utilities
+        search_filter = st.text_input("🔍 Filter results by domain extension or keyword", placeholder="e.g. .com or .net")
+        status_filter = st.multiselect("Filter Statuses", options=["AVAILABLE", "EXPIRED", "REDEMPTION"], default=["AVAILABLE", "EXPIRED", "REDEMPTION"])
+        
+        if search_filter:
+            df = df[df["Domain"].str.contains(search_filter.lower())]
+        df = df[df["Status"].isin(status_filter)]
+        
+        st.dataframe(
+            df,
+            column_config={
+                "Domain": st.column_config.TextColumn("Domain Name", width="medium"),
+                "Status": st.column_config.TextColumn("Analysis Result"),
+                "Expiration Date": st.column_config.TextColumn("Expiration"),
+                "Found On": st.column_config.TextColumn("Found On Source Pages"),
+                "Register Search Link": st.column_config.LinkColumn("Register Link", display_text="Check Namecheap")
+            },
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # Expose Download Option
+        col_csv, col_json = st.columns(2)
+        with col_csv:
+            csv_data = df.to_csv(index=False).encode('utf-8')
+            st.download_button("📥 Download Results as CSV", data=csv_data, file_name="domain_hunter_results.csv", mime="text/csv", use_container_width=True)
+        with col_json:
+            json_data = json.dumps(raw_results, indent=4)
+            st.download_button("📥 Download Raw JSON", data=json_data, file_name="domain_hunter_results.json", mime="application/json", use_container_width=True)
     else:
-        st.info("No active search results. Run a hunt using the configurations on the sidebar.")
+        st.info("No available or expired domains identified yet. Adjust settings or run a new search.")
 
 # ----------------- TAB: SYSTEM -----------------
 with tab_system:
