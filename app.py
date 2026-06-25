@@ -170,8 +170,11 @@ if "pipeline_state" not in st.session_state:
         "active": False,
         "log_queue": queue.Queue(),
         "terminal_logs": [],
+        "search_results": [],
+        "found_domains": [],
+        "expired_domains": [],
         "metrics": {
-            "searched_urls": 0,
+            "search_urls": 0,
             "domains_found": 0,
             "available_domains": 0,
             "expired_domains": 0,
@@ -258,8 +261,7 @@ def run_pipeline(state, query, num_searches, crawl_timeout, dns_workers, whois_w
             state["active"] = False
             return
             
-        with open("search_results.json", "w", encoding="utf-8") as f:
-            json.dump(urls, f, indent=4)
+        state["search_results"] = urls
         state["log_queue"].put(f"[SUCCESS] Search completed. Found {len(urls)} URLs.")
         state["metrics"]["searched_urls"] = len(urls)
         
@@ -283,8 +285,7 @@ def run_pipeline(state, query, num_searches, crawl_timeout, dns_workers, whois_w
                 "sources": sorted(list(found_domains[domain]))
             })
             
-        with open("found_domains.json", "w", encoding="utf-8") as f:
-            json.dump(output_data, f, indent=2, ensure_ascii=False)
+        state["found_domains"] = output_data
             
         sorted_domains = sorted(list(found_domains.keys()))
             
@@ -319,9 +320,7 @@ def run_pipeline(state, query, num_searches, crawl_timeout, dns_workers, whois_w
         
         if not non_resolving_domains:
             state["log_queue"].put("[SUCCESS] All discovered domains are resolving. None are expired/available.")
-            with open("expired_domains.json", "w") as f:
-                json.dump([], f)
-            checker.generate_empty_md_report("expired_domains.md", len(sorted_domains), resolving_count)
+            state["expired_domains"] = []
             state["active"] = False
             return
             
@@ -349,11 +348,7 @@ def run_pipeline(state, query, num_searches, crawl_timeout, dns_workers, whois_w
             item["sources"] = sorted(list(found_domains.get(item["domain"], [])))
 
         expired_or_available = [r for r in results if r["status"] in ["available", "expired", "redemption"]]
-        
-        with open("expired_domains.json", "w") as f:
-            json.dump(expired_or_available, f, indent=4)
-            
-        checker.generate_md_report("expired_domains.md", len(sorted_domains), resolving_count, results, expired_or_available)
+        state["expired_domains"] = expired_or_available
         
         avail_count = sum(1 for r in expired_or_available if r["status"] == "available")
         exp_count = sum(1 for r in expired_or_available if r["status"] == "expired")
@@ -380,6 +375,9 @@ if start_hunt:
     else:
         st.session_state.pipeline_state["active"] = True
         st.session_state.pipeline_state["terminal_logs"] = []
+        st.session_state.pipeline_state["search_results"] = []
+        st.session_state.pipeline_state["found_domains"] = []
+        st.session_state.pipeline_state["expired_domains"] = []
         st.session_state.pipeline_state["metrics"] = {
             "searched_urls": 0,
             "domains_found": 0,
@@ -448,13 +446,7 @@ with tab_dashboard:
 with tab_results:
     st.markdown("### 🎯 Hunt Results")
     
-    expired_json_path = "expired_domains.json"
-    if os.path.exists(expired_json_path):
-        try:
-            with open(expired_json_path, "r") as f:
-                raw_results = json.load(f)
-        except Exception:
-            raw_results = []
+    raw_results = st.session_state.pipeline_state.get("expired_domains", [])
             
         if raw_results:
             # Parse into a clean DataFrame
@@ -518,26 +510,20 @@ with tab_results:
 
 # ----------------- TAB: SYSTEM -----------------
 with tab_system:
-    st.markdown("### 📂 Discovered Workspace Files")
+    st.markdown("### 📂 Discovered Workspace Files (In-Memory)")
     files_col1, files_col2 = st.columns(2)
     with files_col1:
-        st.markdown("#### `search_results.json`")
-        if os.path.exists("search_results.json"):
-            try:
-                with open("search_results.json", "r") as f:
-                    st.json(json.load(f))
-            except Exception as e:
-                st.error(f"Error reading search results: {e}")
+        st.markdown("#### Search Results")
+        search_results = st.session_state.pipeline_state.get("search_results", [])
+        if search_results:
+            st.json(search_results)
         else:
-            st.text("File does not exist yet.")
+            st.text("No search results yet.")
             
     with files_col2:
-        st.markdown("#### `found_domains.json`")
-        if os.path.exists("found_domains.json"):
-            try:
-                with open("found_domains.json", "r") as f:
-                    st.json(json.load(f))
-            except Exception as e:
-                st.error(f"Error reading found domains: {e}")
+        st.markdown("#### Found Domains")
+        found_domains = st.session_state.pipeline_state.get("found_domains", [])
+        if found_domains:
+            st.json(found_domains)
         else:
-            st.text("File does not exist yet.")
+            st.text("No domains found yet.")
